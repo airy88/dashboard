@@ -330,7 +330,7 @@ body{background:var(--bg);font-family:'Noto Sans KR',sans-serif;color:var(--ink)
   </div>
 </div>
 
-<input type="file" id="fileIn" accept=".json">
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -348,13 +348,26 @@ function todayStr(){return new Date().toISOString().slice(0,10);}
 function saveLS(){localStorage.setItem(LS_KEY,JSON.stringify(db));localStorage.setItem(LS_CFG,JSON.stringify(cfg));}
 
 function getD(d){
-  if(!db[d]) db[d]={
-    todos:{k1:[{t:"",d:false}],k2:[{t:"",d:false},{t:"",d:false}],k3:[{t:"",d:false},{t:"",d:false},{t:"",d:false}]},
-    sch:{a:"",b:"",c:"",d:""},
-    rt:cfg.routines.map(function(){return false;}),
-    prog:cfg.progNames.map(function(n){return {n:n,p:0};}),
-    diary:""
-  };
+  if(!db[d]){
+    /* 가장 최근 날짜의 진행사항 % 이어받기 */
+    var prevPct = cfg.progNames.map(function(){return 0;});
+    var dates = Object.keys(db).sort();
+    if(dates.length > 0){
+      var latest = dates[dates.length-1];
+      if(db[latest] && db[latest].prog){
+        prevPct = cfg.progNames.map(function(n,i){
+          return db[latest].prog[i] ? db[latest].prog[i].p : 0;
+        });
+      }
+    }
+    db[d]={
+      todos:{k1:[{t:"",d:false}],k2:[{t:"",d:false},{t:"",d:false}],k3:[{t:"",d:false},{t:"",d:false},{t:"",d:false}]},
+      sch:{a:"",b:"",c:"",d:""},
+      rt:cfg.routines.map(function(){return false;}),
+      prog:cfg.progNames.map(function(n,i){return {n:n,p:prevPct[i]};}),
+      diary:""
+    };
+  }
   while(db[d].rt.length<cfg.routines.length) db[d].rt.push(false);
   db[d].rt=db[d].rt.slice(0,cfg.routines.length);
   while(db[d].prog.length<cfg.progNames.length) db[d].prog.push({n:cfg.progNames[db[d].prog.length]||"",p:0});
@@ -381,12 +394,13 @@ function render(){
 function renderTodos(todos){
   ["k1","k2","k3"].forEach(function(k){
     var el=document.getElementById(k); el.innerHTML="";
-    (todos[k]||[]).forEach(function(item){el.appendChild(mkTr(k,item));});
+    (todos[k]||[]).forEach(function(item,idx){el.appendChild(mkTr(k,item,idx));});
   });
   cntTodos(todos);
 }
-function mkTr(k,item){
+function mkTr(k,item,idx){
   var vmap={k1:"v1",k2:"v2",k3:"v3"},v=vmap[k];
+  var mins={k1:1,k2:2,k3:3};
   var row=document.createElement("div"); row.className="tr "+k;
   var chk=document.createElement("div"); chk.className="chk "+v+(item.d?" on":"");
   chk.onclick=function(){item.d=!item.d;chk.className="chk "+v+(item.d?" on":"");ta.className="tta"+(item.d?" done":"");cntTodos(getD(cur).todos);saveLS();};
@@ -395,7 +409,18 @@ function mkTr(k,item){
   ta.oninput=function(){item.t=ta.value;ta.style.height="auto";ta.style.height=ta.scrollHeight+"px";saveLS();};
   ta.onkeydown=function(e){if(e.key==="Enter")e.preventDefault();};
   setTimeout(function(){ta.style.height="auto";ta.style.height=Math.max(ta.scrollHeight,22)+"px";},0);
-  row.appendChild(chk); row.appendChild(ta); return row;
+  var del=document.createElement("button");
+  del.style.cssText="background:transparent;border:none;color:var(--ink3);font-size:16px;padding:0 4px;cursor:pointer;flex-shrink:0;opacity:.4;line-height:1";
+  del.innerHTML="&#10005;";
+  del.onclick=function(){
+    var list=getD(cur).todos[k];
+    if(list.length<=mins[k]){showToast("최소 "+mins[k]+"개는 유지돼요");return;}
+    list.splice(idx,1);
+    renderTodos(getD(cur).todos);
+    saveLS();
+  };
+  row.appendChild(chk); row.appendChild(ta); row.appendChild(del);
+  return row;
 }
 function addTodo(k){
   getD(cur).todos[k].push({t:"",d:false}); renderTodos(getD(cur).todos); saveLS();
@@ -416,13 +441,19 @@ function renderSch(sch){
 
 function renderRt(states){
   var list=document.getElementById("rList"); list.innerHTML="";
+  var grid=document.createElement("div");
+  grid.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:6px";
   cfg.routines.forEach(function(name,i){
     var row=document.createElement("div"); row.className="rr";
+    row.style.cssText="margin-bottom:0;overflow:hidden";
     row.onclick=function(){states[i]=!states[i];renderRt(states);saveLS();};
     var chk=document.createElement("div"); chk.className="rchk"+(states[i]?" on":"");
-    var lbl=document.createElement("span"); lbl.className="rlbl"+(states[i]?" done":""); lbl.textContent=name;
-    row.appendChild(chk); row.appendChild(lbl); list.appendChild(row);
+    var lbl=document.createElement("span"); lbl.className="rlbl"+(states[i]?" done":"");
+    lbl.textContent=name;
+    lbl.style.cssText="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px";
+    row.appendChild(chk); row.appendChild(lbl); grid.appendChild(row);
   });
+  list.appendChild(grid);
   var done=states.filter(function(x){return x;}).length;
   document.getElementById("rBar").style.width=Math.round(done/Math.max(cfg.routines.length,1)*100)+"%";
   document.getElementById("rPct").textContent=done+" / "+cfg.routines.length+" 완료";
@@ -572,7 +603,14 @@ function buildPgList(){
 function pgAdd(){var v=document.getElementById("pgNewInput").value.trim();if(!v)return;pgTemp.push(v);buildPgList();document.getElementById("pgNewInput").value="";}
 function pgSaveAndClose(){
   cfg.progNames=pgTemp.filter(function(x){return x.trim();});
-  Object.keys(db).forEach(function(d){db[d].prog=cfg.progNames.map(function(n,i){return {n:n,p:(db[d].prog&&db[d].prog[i]?db[d].prog[i].p:0)};});});
+  Object.keys(db).forEach(function(d){
+    var oldProg=db[d].prog||[];
+    db[d].prog=cfg.progNames.map(function(n,i){
+      /* 같은 이름 항목이 있으면 기존 % 유지, 없으면 0 */
+      var found=oldProg.filter(function(p){return p.n===n;})[0];
+      return {n:n, p:found?found.p:0};
+    });
+  });
   saveLS(); renderProg(getD(cur).prog); closePgModal(); showToast("진행사항 저장됨 ✓");
 }
 
